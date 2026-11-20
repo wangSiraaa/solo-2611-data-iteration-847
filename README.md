@@ -265,6 +265,120 @@ No arbitrary type inference, no Arrow Union, no online database migration.
 
 ---
 
+## 4. Polyline error catalogs (`extcontract/polyline.py`, `extcontract/catalog.py`)
+
+The replay screen accepts a finite number of display points per round, but the
+ingested rows carry exact rational readings. The catalog service compresses exact
+readings into per-channel polylines **without any floating-point arithmetic**: every
+time, value, error, cap and weight is an exact `int`/`Fraction`, and endpoint equality
+is rational equality (never an approximate comparison).
+
+### Channel selection
+
+A catalog is published through an extended entry point on the same ingestion library:
+
+```python
+spec = ChannelSpec(name_field="ch", time_field="t", value_field="v")
+result = library.publish_polyline_catalog(spec, tolerance=Fraction(2))
+catalog = result.catalog          # None when result.status == "REJECTED"
+```
+
+* The channel name comes from a **TEXT** `field_id`; time and value from numeric
+  (INT / DECIMAL) `field_id`s. TEXT is never parsed as a number.
+* Valid times within one channel must be unique. A duplicate time is a conflict that
+  rejects the whole build (the same time in two different channels is fine).
+* A `null` value **splits** the channel into two segments; no line is ever drawn
+  across the gap. Empty runs are not displayed; a one-sample segment keeps its point.
+* Compression only ever keeps original samples at increasing times, always including
+  each non-empty segment's head and tail; the display joins consecutive kept points
+  with a straight line.
+* Envelope: at most 70 non-null points per channel and at most 12 channels; breaching
+  either limit is a `REJECTED` result with the collected reasons.
+
+### What a catalog answers
+
+For every pair `(i, j)` of same-segment endpoints it stores the exact maximum
+absolute error of the connecting chord over every clamped original time, plus the
+**earliest** time attaining that maximum:
+
+```python
+pair = catalog.endpoint_error("A", segment_index=0, i=0, j=2)
+pair.max_error                              # exact Fraction
+catalog.earliest_error_time("A", 0, 0, 2)   # earliest time at that maximum
+catalog.minimum_points("A", 0)                       # under the build cap
+catalog.minimum_polyline("A", 0, cap=Fraction(3))    # any non-negative cap
+```
+
+The minimum-point polyline for a cap is found by exact dynamic programming (greedy
+short-cuts are not trusted); ties resolve deterministically to the earliest reachable
+points.
+
+### Snapshots, revisions and corrections
+
+Each catalog is an immutable, self-contained `polyline-catalog/v1` document embedding
+the exact `reader-records/v1` snapshot it was built from, every row's `revision`, and
+the `sources` provenance. Correcting a reading through the original ingestion entry
+(higher revision) and publishing again yields a **new** catalog with the new errors;
+the previously saved catalog still explains the old polylines because nothing mutates
+it. A content fingerprint covers the snapshot, selection, cap and all derived geometry,
+so a tampered catalog is refused on reopen.
+
+```python
+catalog.save("screen.json")
+reopened = load_catalog(json.load(open("screen.json")))   # no library needed
+```
+
+### Screen budget allocation
+
+Given a global point budget and positive per-channel weights, every non-empty segment
+must be displayed. The allocator minimises
+
+> max over channels of `weight[c] × in-channel maximum absolute error`
+
+by an exact binary search over the finite set of weighted error candidates, and
+returns the chosen points, the actual per-channel error, each polyline, and the optimal
+objective value. Weights accept ints, `Fraction`s, or exact fraction strings; floats are
+rejected. When the mandatory floors do not fit, the result is `INFEASIBLE` and names the
+minimum total point count.
+
+```python
+plan = reopened.allocate_display(budget=5, weights={"A": 1, "B": 2})
+plan.status                 # "FEASIBLE" | "INFEASIBLE"
+plan.optimal                # Fraction: the minimised weighted worst error
+plan.channels[c].point_count, .max_error, .weighted_error, .polylines, .points
+```
+
+Mandated scenario (also in `examples/run_polyline_demo.py`, covered by tests):
+
+| Channels | Budget | Weights | Extra point to | Optimum |
+|----------|--------|---------|----------------|---------|
+| A=(0,4,0), B=(0,3,0) | 5 | A=1, B=1 | A | 3 |
+| A=(0,4,0), B=(0,3,0) | 5 | A=1, B=2 | B | 4 |
+| A=(0,2,0) after revision-2 correction, B=(0,3,0) | 5 | A=1, B=1 | B | 2 |
+
+A null-broken channel keeps separate polylines per segment; under a short budget the
+allocator reports the exact minimum required points rather than bridging any gap. The
+screen consumes a saved, reopened catalog directly — no ingestion library required.
+
+CLI:
+
+```bash
+python -m extcontract catalog READER.json --name-field ch --time-field t \
+       --value-field v --tolerance 2 --output catalog.json
+python -m extcontract plan catalog.json --budget 5 --weights weights.json
+```
+
+### Costs (documented envelope: ≤70 points/channel, ≤12 channels)
+
+* For a segment of `n` points, all chord errors and the point-count DP are `O(n²)`
+  time and memory; the channel curve combines independent segments and stays well
+  inside the 70-point envelope.
+* Budget allocation is an exact binary search over the distinct weighted candidate
+  errors, each checked by linear scans of the channel curves — no floats, no sampled
+  tolerances.
+
+---
+
 ## Templates for the mandated scenario
 
 `fixtures/bootstrap.json`, `fixtures/F-BAD.json`, `fixtures/F-NEW.json` are the
@@ -288,8 +402,11 @@ extcontract/
   compat.py     row-free whole-domain proof + adaptation plan + witnesses
   adapter.py    per-row validation + plan application -> reader-records/v1
   ingest.py     revision-aware, atomic, idempotent target state
-  cli.py        compat / adapt / ingest commands
-examples/run_745_demo.py   end-to-end scenario against the real client
-fixtures/                  bootstrap, F-BAD, F-NEW documents
-tests/                     compat, adapter, ingest, fixtures, scale
+  polyline.py   exact chord errors, min-point DP, per-channel trade-off curves
+  catalog.py    polyline-catalog/v1 build, save/reopen, screen budget allocation
+  cli.py        compat / adapt / ingest / catalog / plan commands
+examples/run_745_demo.py       end-to-end scenario against the real client
+examples/run_polyline_demo.py  polyline catalog, correction and budget scenario
+fixtures/                      bootstrap, F-BAD, F-NEW documents
+tests/                         compat, adapter, ingest, fixtures, scale, polyline
 ```

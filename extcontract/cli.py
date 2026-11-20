@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 from .adapter import adapt_file_document, write_records
+from .catalog import ChannelSpec, build_catalog, load_catalog_file
 from .compat import check_compatibility
 from .contract import load_contract
 from .ingest import IngestionLibrary
@@ -194,6 +195,42 @@ def _state_from_library(library: IngestionLibrary) -> dict:
     return {"sequence": library._sequence, "rows": rows, "receipts": receipts}
 
 
+def cmd_catalog_build(args: argparse.Namespace) -> int:
+    """Build a polyline catalog from the CLI's persisted ingestion state."""
+    from fractions import Fraction
+
+    reader = load_contract(args.reader, role="reader")
+    state_path = Path(args.state_dir) / f"state-{reader.version}.json"
+    library = _library_from_state(reader, _load_state(state_path))
+    spec = ChannelSpec(
+        name_field=args.name_field,
+        time_field=args.time_field,
+        value_field=args.value_field,
+    )
+    result = build_catalog(
+        library, spec, tolerance=Fraction(args.tolerance), catalog_id=args.catalog_id
+    )
+    if not result.built:
+        print(json.dumps(result.to_json(), ensure_ascii=False, indent=2, sort_keys=True))
+        print("catalog build rejected", file=sys.stderr)
+        return 1
+    result.catalog.save(args.output)
+    print(
+        f"wrote catalog {result.catalog.catalog_id} with "
+        f"{len(result.catalog.channels)} channel(s) to {args.output}"
+    )
+    return 0
+
+
+def cmd_catalog_plan(args: argparse.Namespace) -> int:
+    """Allocate screen points from a saved, reopened catalog (no library)."""
+    catalog = load_catalog_file(args.catalog)
+    weights = json.loads(Path(args.weights).read_text(encoding="utf-8"))
+    result = catalog.allocate_display(args.budget, weights)
+    print(json.dumps(result.to_json(), ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if result.status == "FEASIBLE" else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="extcontract")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -218,6 +255,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_ingest.add_argument("--state-dir", default=".extcontract-state")
     p_ingest.add_argument("--publish", default=None)
     p_ingest.set_defaults(func=cmd_ingest)
+
+    p_catalog = sub.add_parser(
+        "catalog", help="build a polyline error catalog from ingested state"
+    )
+    p_catalog.add_argument("reader")
+    p_catalog.add_argument("--state-dir", default=".extcontract-state")
+    p_catalog.add_argument("--name-field", required=True)
+    p_catalog.add_argument("--time-field", required=True)
+    p_catalog.add_argument("--value-field", required=True)
+    p_catalog.add_argument("--tolerance", default="0")
+    p_catalog.add_argument("--catalog-id", default=None)
+    p_catalog.add_argument("--output", required=True)
+    p_catalog.set_defaults(func=cmd_catalog_build)
+
+    p_plan = sub.add_parser(
+        "plan", help="allocate screen points from a saved polyline catalog"
+    )
+    p_plan.add_argument("catalog")
+    p_plan.add_argument("--budget", type=int, required=True)
+    p_plan.add_argument(
+        "--weights",
+        required=True,
+        help="JSON file mapping channel name to a positive rational",
+    )
+    p_plan.set_defaults(func=cmd_catalog_plan)
     return parser
 
 

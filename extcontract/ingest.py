@@ -457,6 +457,32 @@ class IngestionLibrary:
             "rows": rows,
         }
 
+    def publish_polyline_catalog(
+        self,
+        spec: "ChannelSpec",
+        *,
+        tolerance: "Fraction | int" = 0,
+        catalog_id: str | None = None,
+        reader_version: str | None = None,
+    ) -> "CatalogBuildResult":
+        """Publish a polyline error catalog from the current target snapshot.
+
+        This extends the original :meth:`publish` entry point: the reader
+        rows, revisions and ``sources`` provenance are captured exactly once
+        and embedded in the returned catalog, so re-ingesting corrected rows
+        afterwards and publishing again yields a new catalog while every
+        previously saved catalog keeps explaining its own polylines.
+        """
+        from .catalog import build_catalog
+
+        return build_catalog(
+            self,
+            spec,
+            tolerance=tolerance,
+            catalog_id=catalog_id,
+            reader_version=reader_version,
+        )
+
     def numeric_totals(self, reader_version: str | None = None) -> dict[str, str]:
         rv = reader_version or self.reader.version
         totals: dict[str, Fraction] = {}
