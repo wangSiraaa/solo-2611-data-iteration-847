@@ -1,0 +1,83 @@
+{
+  "rows": [
+    {
+      "row_id": "one",
+      "values": {
+        "amount": 1
+      }
+    },
+    {
+      "row_id": "two",
+      "values": {
+        "amount": -2
+      }
+    }
+  ],
+  "operations": [
+    {
+      "op": "adapt",
+      "writer": "writer-contract.json",
+      "reader": "reader-contract.json",
+      "label": "first"
+    },
+    {
+      "op": "reader_revision",
+      "version": "r2",
+      "replace_type": {
+        "field_id": "amount",
+        "type": {
+          "kind": "DECIMAL",
+          "precision": 2,
+          "scale": 0
+        }
+      },
+      "expected": "INCOMPATIBLE"
+    },
+    {
+      "op": "writer_revision",
+      "version": "w2",
+      "replace_type": {
+        "field_id": "amount",
+        "type": {
+          "kind": "INT",
+          "bits": 16
+        }
+      },
+      "reader_version": "r1",
+      "expected": "INCOMPATIBLE"
+    }
+  ],
+  "additional_contract_cases": [
+    {
+      "writer": {
+        "kind": "DECIMAL",
+        "precision": 3,
+        "scale": 1
+      },
+      "reader": {
+        "kind": "DECIMAL",
+        "precision": 4,
+        "scale": 2
+      },
+      "writer_nullable": false,
+      "reader_nullable": false,
+      "value": "1/10",
+      "expected": "SAFE"
+    },
+    {
+      "writer": {
+        "kind": "INT",
+        "bits": 8
+      },
+      "reader": {
+        "kind": "DECIMAL",
+        "precision": 3,
+        "scale": 0
+      },
+      "writer_nullable": true,
+      "reader_nullable": false,
+      "value": 1,
+      "expected": "INCOMPATIBLE"
+    }
+  ]
+}

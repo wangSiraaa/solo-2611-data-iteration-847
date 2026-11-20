@@ -1,0 +1,9 @@
+{
+  "file_id": "bootstrap",
+  "writer_version": "w1",
+  "reader_version": "r1",
+  "rows": [
+    {"row_id": "one", "revision": 1, "values": {"amount": 1}},
+    {"row_id": "two", "revision": 1, "values": {"amount": -2}}
+  ]
+}

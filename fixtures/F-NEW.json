@@ -1,0 +1,9 @@
+{
+  "file_id": "F-NEW",
+  "writer_version": "w1",
+  "reader_version": "r1",
+  "rows": [
+    {"row_id": "one", "revision": 2, "values": {"amount": 3}},
+    {"row_id": "two", "revision": 2, "values": {"amount": 4}}
+  ]
+}

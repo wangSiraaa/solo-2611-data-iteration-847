@@ -1,0 +1,14 @@
+{
+  "version": "w1",
+  "fields": [
+    {
+      "field_id": "amount",
+      "name": "old_amount",
+      "type": {
+        "kind": "INT",
+        "bits": 8
+      },
+      "nullable": false
+    }
+  ]
+}
